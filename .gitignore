@@ -8,11 +8,14 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+dist-gui/
+astrodenoisepy/dist/
+astrodenoisepy/dist-gui/
 docs/build/
+data/**
 example_data
 htmlcov/
 .coverage*
-
 *.npz
 *.tif*
 *.hdf5

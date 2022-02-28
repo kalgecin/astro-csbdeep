@@ -76,11 +76,12 @@ class NoNormalizer(Normalizer):
         If :func:`after` is called, but parameter `do_after` was set to ``False`` in the constructor.
     """
 
-    def __init__(self, do_after=False):
+    def __init__(self, expand_low=0, do_after=False):
         self._do_after = do_after
+        self.expand_low = expand_low
 
     def before(self, x, axes):
-        return x
+        return x + self.expand_low
 
     def after(self, mean, scale, axes):
         self.do_after or _raise(ValueError())
@@ -89,6 +90,10 @@ class NoNormalizer(Normalizer):
     @property
     def do_after(self):
         return self._do_after
+
+    @property
+    def params(self):
+        return f"{self.__class__.__name__}"
 
 
 class PercentileNormalizer(Normalizer):
@@ -156,6 +161,10 @@ class PercentileNormalizer(Normalizer):
         """``do_after`` parameter from constructor."""
         return self._do_after
 
+    @property
+    def params(self):
+        return f"{self.__class__.__name__}_{self.pmin}_{self.pmax}"
+
 
 class ReinhardNormalizer(Normalizer):
 
@@ -176,15 +185,16 @@ class ReinhardNormalizer(Normalizer):
 
 class STFNormalizer(Normalizer):
 
-    def __init__(self, C=-4.0, B=0.185, do_after=True):
+    def __init__(self, C=-4.0, B=0.185, expand_low=0, do_after=True):
         self._do_after = do_after
         self.C = C
         self.B = B
+        self.expand_low = expand_low
 
     def before(self, x, axes):
         axis = tuple(d for d,a in enumerate(axes) if a != 'C')
         _x, self.m, self.c = STFPreProcessor.stf(x, self.C, self.B, axis)
-        return _x
+        return _x + self.expand_low
 
     def norm(self,data):
         return (data - np.min(data)) / (np.max(data) - np.min(data))
@@ -202,6 +212,11 @@ class STFNormalizer(Normalizer):
     @property
     def do_after(self):
         return self._do_after
+
+    @property
+    def params(self):
+        return f"{self.__class__.__name__}_{self.C}_{self.B}"
+
 
 class SimpleNormalizer(Normalizer):
 
@@ -341,8 +356,6 @@ class PadAndCropResizer(Resizer):
         return x[crop]
 
 
-from colour_hdri import tonemapping_operator_Reinhard2004
-
 @add_metaclass(ABCMeta)
 class PreProcessor():
     """Abstract base class for Pre-processor methods."""
@@ -445,7 +458,7 @@ class ReinhardPreProcessor(PreProcessor):
         self.kwargs = kwargs
 
     def before(self, x, axes):
-        return tonemapping_operator_Reinhard2004(x, **self.kwargs)
+        return pow(x/(1+x),1/2.2)
 
     def after(self, mean, scale, axes):
         self.do_after or _raise(ValueError())
