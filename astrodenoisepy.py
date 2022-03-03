@@ -7,10 +7,12 @@ import tensorflow as tf
 import argparse
 from tifffile import imread
 import numpy as npp
+import math
 
 from csbdeep.data import NoNormalizer, STFNormalizer, PadAndCropResizer
 from csbdeep.models import CARE
 from astrodeep.utils.fits import read_fits, write_fits
+from astrodeep.utils.colorspaces import lab2rgb, rgb2lab
 
 parser = argparse.ArgumentParser()
 
@@ -24,6 +26,7 @@ parser.add_argument('--normalize','-n', action='store_true', help='Enable STFNor
 parser.add_argument('--norm-C', type=float, default=-2.8, help='C parameter for STF Normalization. Default: -2.8')
 parser.add_argument('--norm-B', type=float, default=0.25, help='B parameter for STF Normalization, Higher B results in stronger stretch providing the ability target de-noising more effectively. . Default: 0.25, Range: 0 < B < 1')
 parser.add_argument('--norm-restore', action='store_true', help='Restores output image to original data range after processing. Default: False when not specified.')
+parser.add_argument('--lum-only', '-L', action='store_true', help='Only denoises the luminance layer')
 
 args = parser.parse_args()
 
@@ -34,7 +37,7 @@ with tf.device(f"/{args.device}:0"):
         if path.suffix in ['.fit','.fits']:
             data, headers = read_fits(path)
         elif path.suffix in ['.tif','.tiff']:
-            data, headers = npp.moveaxis(imread(path),-1,0), None            
+            data, headers = npp.moveaxis(imread(path),-1,0), None
         else:
             print("Skipping unsupported format. Allowed formats: .tiff/.tif/.fits/.fit")
             return
@@ -44,7 +47,7 @@ with tf.device(f"/{args.device}:0"):
 
         if data.ndim == 2:
             data = data[npp.newaxis,...]
-            
+
         print("Processing file:",path)
         print("Image Dimensions:",data.shape)
 
@@ -56,12 +59,24 @@ with tf.device(f"/{args.device}:0"):
         axes = 'YX'
         normalizer = STFNormalizer(C=args.norm_C,B=args.norm_B,do_after=args.norm_restore) if args.normalize is True else NoNormalizer()
         print("Using Normalization:",normalizer.params)
-        
-        for c in data:
-            output_denoised.append(
-                model.predict(c, axes, normalizer=normalizer,resizer=PadAndCropResizer(), n_tiles=n_tiles)
-                )
-        
+
+        if args.lum_only:
+            lab = rgb2lab(data)
+            luminance = lab[0]
+            # print(f"max: {luminance.max()}, min: {luminance.min()}")
+            luminance /= 100
+            luminance = model.predict(luminance, axes, normalizer=normalizer, resizer=PadAndCropResizer(), n_tiles=n_tiles)
+            luminance /= max(luminance.max(), 1)
+            luminance *= 100
+            # print(f"max: {luminance.max()}, min: {luminance.min()}")
+            lab[0] = luminance
+            denoised = lab2rgb(lab)
+            output_denoised = npp.asarray(denoised)
+        else:
+            for c in data:
+                output_denoised.append(
+                    model.predict(c, axes, normalizer=normalizer, resizer=PadAndCropResizer(), n_tiles=n_tiles))
+
         output_file_name = path.stem + f"_denoised_{model.name}.fits"
         output_path = path_join(path.parent, 'denoised')
         Path(output_path).mkdir(exist_ok=True)
@@ -71,7 +86,7 @@ with tf.device(f"/{args.device}:0"):
 
 
     print("Loading model:", args.model)
-    model = CARE(config=None, name=args.model, basedir=args.models_folder)    
+    model = CARE(config=None, name=args.model, basedir=args.models_folder)
     file_or_path = args.input[0]
 
     if os.path.isfile(file_or_path):
@@ -81,7 +96,7 @@ with tf.device(f"/{args.device}:0"):
         extensions = ('*.fits', '*.fit', '*.tiff', '*.tif')
         files_list = []
         for ext in extensions:
-            files_list.extend(path.glob(ext))        
+            files_list.extend(path.glob(ext))
         for file in files_list:
             predict(file,model)
 
